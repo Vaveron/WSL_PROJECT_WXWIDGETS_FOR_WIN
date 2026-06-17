@@ -1,0 +1,22 @@
+{
+    "configurations": [
+        {
+            "name": "WSL",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "/home/andrew/projects/Example/wxWidgets-3.2.10/windows-install/include/wx-3.2",
+                "/home/andrew/projects/Example/wxWidgets-3.2.10/windows-install/lib/wx/include/x86_64-w64-mingw32-msw-unicode-static-3.2",
+            ],
+            "defines": [
+                "__WXMSW__",
+                "__WXDEBUG__",
+                "wxUSE_UNICODE=1"
+            ],
+            "compilerPath": "/usr/bin/x86_64-w64-mingw32-g++",
+            "cStandard": "c17",
+            "cppStandard": "c++17",
+            "intelliSenseMode": "windows-gcc-x64"
+        }
+    ],
+    "version": 4
+}

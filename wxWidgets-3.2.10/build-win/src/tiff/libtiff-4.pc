@@ -1,0 +1,11 @@
+prefix=/home/andrew/projects/VisialCAL/wxWidgets-3.2.10/build-win/../windows-install
+exec_prefix=${prefix}
+libdir=${exec_prefix}/lib
+includedir=${prefix}/include
+
+Name: libtiff
+Description:  Tag Image File Format (TIFF) library.
+Version: 4.2.0
+Libs: -L${libdir} -ltiff
+Libs.private: 
+Cflags: -I${includedir}
