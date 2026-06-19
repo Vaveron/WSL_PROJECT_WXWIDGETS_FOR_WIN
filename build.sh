@@ -15,6 +15,7 @@ PROJECT_NAME=$(basename "$(pwd)")
 
 # ==================== ПАРСИНГ АРГУМЕНТОВ ====================
 TARGET_OS=""
+BUILD_TYPE="dynamic"  # default: dynamic
 
 for arg in "$@"; do
     case $arg in
@@ -26,6 +27,12 @@ for arg in "$@"; do
             ;;
         all|both)
             TARGET_OS="all"
+            ;;
+        static)
+            BUILD_TYPE="static"
+            ;;
+        dynamic)
+            BUILD_TYPE="dynamic"
             ;;
         clean)
             echo -e "${YELLOW}🧹 Очистка...${NC}"
@@ -40,11 +47,14 @@ for arg in "$@"; do
             echo "  win, windows    - Сборка для Windows"
             echo "  lin, linux      - Сборка для Linux"
             echo "  all, both       - Сборка для Windows и Linux одновременно"
+            echo "  static          - Статическая линковка (только Windows)"
+            echo "  dynamic         - Динамическая линковка (по умолчанию)"
             echo "  clean           - Очистить сборку"
             echo "  --help, -h      - Показать эту справку"
             echo ""
             echo -e "${YELLOW}Примеры:${NC}"
-            echo "  ./build.sh win         - Сборка для Windows"
+            echo "  ./build.sh win         - Сборка для Windows (динамическая)"
+            echo "  ./build.sh win static  - Сборка для Windows (статическая)"
             echo "  ./build.sh lin         - Сборка для Linux"
             echo "  ./build.sh all         - Сборка для Windows и Linux"
             echo "  ./build.sh clean       - Очистка"
@@ -138,6 +148,7 @@ build_for_os() {
     
     header "🎯 Сборка для $build_name"
     info "$BUILDER_VERSION"
+    
     # ========== НАСТРОЙКА КОМПИЛЯТОРОВ ==========
     if [ "$os" == "windows" ]; then
         CXX="x86_64-w64-mingw32-g++"
@@ -150,64 +161,104 @@ build_for_os() {
         WX_BASE=$(find_wxwidgets "windows")
         if [ -z "$WX_BASE" ]; then
             echo -e "${RED}❌ wxWidgets не найден для Windows!${NC}"
-            echo "Искал в:"
-            echo "  - $(pwd)/windows-install"
-            echo "  - /mingw64"
-            echo "  - /usr"
             return 1
         fi
+
+        # Пути
+        WX_INCLUDE="$WX_BASE/include/wx-3.2"
         
-        # Определяем пути
-        if [ "$WX_BASE" == "/mingw64" ] || [ "$WX_BASE" == "/usr" ]; then
-            WX_INCLUDE="$WX_BASE/include/wx-3.2"
-            if [ "$WX_BASE" == "/mingw64" ]; then
-                WX_SETUP="/mingw64/lib/wx/include/x86_64-w64-mingw32-msw-unicode-3.2"
-                WX_LIB="/mingw64/lib"
+        # Определяем тип сборки
+        if [ "$BUILD_TYPE" == "static" ]; then
+            WX_SETUP="$WX_BASE/lib/wx/include/x86_64-w64-mingw32-msw-unicode-static-3.2"
+            echo -e "${BLUE}📋 Используем СТАТИЧЕСКУЮ сборку${NC}"
+        else
+            WX_SETUP="$WX_BASE/lib/wx/include/x86_64-w64-mingw32-msw-unicode-3.2"
+            echo -e "${BLUE}📋 Используем ДИНАМИЧЕСКУЮ сборку${NC}"
+        fi
+        
+        WX_LIB="$WX_BASE/lib"
+
+        echo -e "${BLUE}📋 wxWidgets: $WX_BASE${NC}"
+        echo -e "${BLUE}📋 Include: $WX_INCLUDE${NC}"
+        echo -e "${BLUE}📋 Setup: $WX_SETUP${NC}"
+        echo -e "${BLUE}📋 Lib: $WX_LIB${NC}"
+
+        # Проверяем наличие setup.h
+        if [ ! -f "$WX_SETUP/wx/setup.h" ]; then
+            echo -e "${RED}❌ setup.h не найден в $WX_SETUP${NC}"
+            echo "Ищем в других местах..."
+            find "$WX_BASE" -name "setup.h" 2>/dev/null
+            return 1
+        fi
+        echo -e "${GREEN}✅ setup.h найден${NC}"
+
+        # ========== ФЛАГИ ЛИНКОВКИ ==========
+        if [ "$BUILD_TYPE" == "static" ]; then
+            # СТАТИЧЕСКАЯ ЛИНКОВКА
+            LDFLAGS="-L$WX_LIB -static -static-libgcc -static-libstdc++ -mwindows -Wl,--gc-sections"
+            
+            # Статические библиотеки wxWidgets
+            if [ -f "$WX_LIB/libwx_mswu_core-3.2-x86_64-w64-mingw32.a" ]; then
+                echo -e "${GREEN}✅ Найдены статические библиотеки${NC}"
+                LDFLAGS="$LDFLAGS -l:libwx_mswu_core-3.2-x86_64-w64-mingw32.a"
+                LDFLAGS="$LDFLAGS -l:libwx_baseu-3.2-x86_64-w64-mingw32.a"
+                LDFLAGS="$LDFLAGS -l:libwx_mswu_adv-3.2-x86_64-w64-mingw32.a"
+                LDFLAGS="$LDFLAGS -l:libwx_mswu_html-3.2-x86_64-w64-mingw32.a"
+                LDFLAGS="$LDFLAGS -l:libwx_mswu_xrc-3.2-x86_64-w64-mingw32.a"
+                
+                # Дополнительные библиотеки wxWidgets
+                LDFLAGS="$LDFLAGS -l:libwxpng-3.2-x86_64-w64-mingw32.a"
+                LDFLAGS="$LDFLAGS -l:libwxjpeg-3.2-x86_64-w64-mingw32.a"
+                LDFLAGS="$LDFLAGS -l:libwxtiff-3.2-x86_64-w64-mingw32.a"
+                LDFLAGS="$LDFLAGS -l:libwxzlib-3.2-x86_64-w64-mingw32.a"
+                LDFLAGS="$LDFLAGS -l:libwxregexu-3.2-x86_64-w64-mingw32.a"
+                LDFLAGS="$LDFLAGS -l:libwxexpat-3.2-x86_64-w64-mingw32.a"
+                
+                # Зависимости
+                [ -f "$WX_LIB/libz.a" ] && LDFLAGS="$LDFLAGS -lz"
+                [ -f "$WX_LIB/libjpeg.a" ] && LDFLAGS="$LDFLAGS -ljpeg"
+                [ -f "$WX_LIB/libtiff.a" ] && LDFLAGS="$LDFLAGS -ltiff"
+                [ -f "$WX_LIB/libpng.a" ] && LDFLAGS="$LDFLAGS -lpng"
+                [ -f "$WX_LIB/libexpat.a" ] && LDFLAGS="$LDFLAGS -lexpat"
             else
-                WX_SETUP="/usr/lib/wx/include/x86_64-w64-mingw32-msw-unicode-3.2"
-                WX_LIB="/usr/lib"
+                echo -e "${RED}❌ Статические библиотеки wxWidgets не найдены!${NC}"
+                echo "Для статической сборки установите:"
+                echo "  sudo apt-get install mingw-w64-x86-64-dev"
+                echo "  или скачайте статические библиотеки wxWidgets"
+                ls -la "$WX_LIB"/libwx*.a 2>/dev/null || echo "Файлов .a нет"
+                return 1
             fi
         else
-            WX_INCLUDE="$WX_BASE/include/wx-3.2"
-            WX_SETUP="$WX_BASE/lib/wx/include/x86_64-w64-mingw32-msw-unicode-static-3.2"
-            WX_LIB="$WX_BASE/lib"
+            # ДИНАМИЧЕСКАЯ ЛИНКОВКА (ПО УМОЛЧАНИЮ)
+            LDFLAGS="-L$WX_LIB -mwindows -Wl,--gc-sections"
+            
+            if [ -f "$WX_LIB/libwx_mswu_core-3.2.dll.a" ]; then
+                echo -e "${GREEN}✅ Найдены динамические библиотеки${NC}"
+                LDFLAGS="$LDFLAGS -lwx_mswu_core-3.2 -lwx_baseu-3.2"
+                LDFLAGS="$LDFLAGS -lwx_mswu_adv-3.2 -lwx_mswu_html-3.2 -lwx_mswu_xrc-3.2"
+            elif [ -f "$WX_LIB/libwx_mswu_core-3.2.a" ]; then
+                # Пробуем без dll
+                LDFLAGS="$LDFLAGS -lwx_mswu_core-3.2 -lwx_baseu-3.2"
+            else
+                echo -e "${RED}❌ Динамические библиотеки wxWidgets не найдены!${NC}"
+                return 1
+            fi
         fi
-        
-        echo -e "${BLUE}📋 wxWidgets: $WX_BASE${NC}"
-        
-        LDFLAGS="-L$WX_LIB -static -mwindows -Wl,--gc-sections"
-        
-        # Ищем библиотеки
-        if [ -f "$WX_LIB/libwx_mswu_core-3.2-x86_64-w64-mingw32.a" ]; then
-            LDFLAGS="$LDFLAGS -l:libwx_mswu_core-3.2-x86_64-w64-mingw32.a"
-            LDFLAGS="$LDFLAGS -l:libwx_baseu-3.2-x86_64-w64-mingw32.a"
-        elif [ -f "$WX_LIB/libwx_mswu_core-3.2.a" ]; then
-            LDFLAGS="$LDFLAGS -lwx_mswu_core-3.2 -lwx_baseu-3.2"
-        else
-            LDFLAGS="$LDFLAGS -lwx_mswu_core -lwx_baseu"
-        fi
-        
-        # Дополнительные библиотеки
-        if [ "$WX_BASE" != "/mingw64" ] && [ "$WX_BASE" != "/usr" ]; then
-            LDFLAGS="$LDFLAGS -l:libwxpng-3.2-x86_64-w64-mingw32.a"
-            LDFLAGS="$LDFLAGS -l:libwxjpeg-3.2-x86_64-w64-mingw32.a"
-            LDFLAGS="$LDFLAGS -l:libwxtiff-3.2-x86_64-w64-mingw32.a"
-            LDFLAGS="$LDFLAGS -l:libwxzlib-3.2-x86_64-w64-mingw32.a"
-            LDFLAGS="$LDFLAGS -l:libwxregexu-3.2-x86_64-w64-mingw32.a"
-            LDFLAGS="$LDFLAGS -l:libwxexpat-3.2-x86_64-w64-mingw32.a"
-        fi
-        
+
+        # СИСТЕМНЫЕ БИБЛИОТЕКИ WINDOWS (общие для обоих типов)
         LDFLAGS="$LDFLAGS -lgdi32 -lole32 -loleaut32 -luuid -lcomctl32 -lcomdlg32"
         LDFLAGS="$LDFLAGS -lshell32 -lshlwapi -lws2_32 -lwinmm -lversion -luxtheme"
         LDFLAGS="$LDFLAGS -loleacc -lmsimg32 -lusp10 -lwinspool"
+        LDFLAGS="$LDFLAGS -lkernel32 -luser32 -ladvapi32"
         
         EXE_SUFFIX=".exe"
-        OUTPUT_NAME="${PROJECT_NAME}_Win.exe"
+        if [ "$BUILD_TYPE" == "static" ]; then
+            OUTPUT_NAME="${PROJECT_NAME}_Win_Static.exe"
+        else
+            OUTPUT_NAME="${PROJECT_NAME}_Win.exe"
+        fi
         
-        # Флаги для ресурсов
         RCFLAGS="-J rc -O coff -I$WX_INCLUDE"
-        
-        # Поиск .rc файлов
         RC_FILES=$(find . -maxdepth 2 -type f -name "*.rc" 2>/dev/null)
         
     elif [ "$os" == "linux" ]; then
@@ -402,7 +453,8 @@ build_for_os() {
 
 # ==================== ЗАПУСК СБОРКИ ====================
 START_TIME=$(date +%s)
-BUILDER_VERSION="Сборщик v0.2 @MrVaveron"
+BUILDER_VERSION="Сборщик v0.3 @MrVaveron"
+
 if [ "$TARGET_OS" == "all" ]; then
     header "🏗️  СБОРКА ДЛЯ WINDOWS И LINUX"
     echo -e "${CYAN}Сборка для обеих платформ...${NC}"
@@ -424,7 +476,8 @@ if [ "$TARGET_OS" == "all" ]; then
         echo -e "${GREEN}✅ Обе сборки завершены успешно!${NC}"
         echo ""
         echo -e "${BLUE}📁 Файлы:${NC}"
-        echo "   🪟 Windows: build/bin/${PROJECT_NAME}_Win_.exe"
+        echo "   🪟 Windows: build/bin/${PROJECT_NAME}_Win.exe"
+        [ -f "build/bin/${PROJECT_NAME}_Win_Static.exe" ] && echo "   🪟 Windows (static): build/bin/${PROJECT_NAME}_Win_Static.exe"
         echo "   🐧 Linux:   build/bin/${PROJECT_NAME}_Linux"
     else
         echo -e "${RED}❌ Одна из сборок завершилась с ошибкой${NC}"
@@ -442,11 +495,19 @@ elif [ "$TARGET_OS" == "windows" ]; then
     DURATION=$((END_TIME - START_TIME))
     echo -e "${YELLOW}⏱️  Время сборки: ${DURATION} сек${NC}"
     echo ""
-    echo "💡 Запуск через wine:"
-    echo "   wine build/bin/${PROJECT_NAME}_Win.exe"
+    echo -e "${CYAN}💡 Запуск:${NC}"
+    echo "   🪟 В Windows:"
+    echo "      \\\\wsl.localhost\\Ubuntu\\$(pwd)/build/bin/${PROJECT_NAME}_Win.exe"
     echo ""
-    echo "💡 В Windows:"
-    echo "   \\\\wsl.localhost\\Ubuntu\\$(pwd)/build/bin/${PROJECT_NAME}_Win.exe"
+    if [ "$BUILD_TYPE" == "static" ]; then
+        echo "   📦 Статическая сборка - можно запускать без DLL"
+    else
+        echo "   ⚠️  Динамическая сборка - нужны DLL в папке с EXE"
+        echo ""
+        echo -e "${YELLOW}📋 Скопируйте DLL:${NC}"
+        echo "   cp /usr/x86_64-w64-mingw32/bin/*.dll build/bin/"
+        echo "   cp $WX_BASE/bin/*.dll build/bin/"
+    fi
     info "$BUILDER_VERSION"
     
 elif [ "$TARGET_OS" == "linux" ]; then
